@@ -67,6 +67,7 @@ public class FlowerArea : MonoBehaviour
                 Flower flower = child.GetComponent<Flower>();
                 if (flower != null)
                 {
+                    
                     Flowers.Add(flower);
                     nectarFlowerDictionary.Add(flower.nectorCollider, flower);
                 }

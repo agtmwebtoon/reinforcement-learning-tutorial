@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using Unity.Mathematics;
 using Unity.MLAgents;
+using Unity.MLAgents.Sensors;
 using UnityEngine;
 
 /// <summary>
@@ -84,10 +85,120 @@ public class HummingbirdAgent : Agent
         }
 
         MoveToSafeRandomPosition(inFrontOfFlower);
-
         UpdateNearestFlower();
 
     }
+    
+    /// <summary>
+    /// Called when and action is received from either the player input or neural network
+    ///
+    /// vectorAction[i] represents:
+    /// Index 0: move vector x (+1 = right, -1 = left) 
+    /// Index 1: move vector y (+1 = up, -1 = down)
+    /// Index 2: move vector z (+1 = forward, -1 = backward)
+    /// Index 3: pitch angle (+1 = pitch up, -1 = pitch down)
+    /// Index 4: yaw angle (+1 = turn right, -1 = turn left)
+    /// </summary>
+    /// <param name="vectorAction">The actions to take</param>
+    public override void OnActionReceived(float[] vectorAction)
+    {
+        // Don't take action if frozen
+        if (frozen) return;
+        
+        // Calculate movement vector
+        Vector3 move = new Vector3(vectorAction[0], vectorAction[1], vectorAction[2]);
+        
+        //Add force in the direction of the move vector
+        rigidbody.AddForce(move * moveForce);
+        
+        // Get the current rotation
+        Vector3 rotationVector = transform.rotation.eulerAngles;
+        float pitchChange = vectorAction[3];
+        float yawChange = vectorAction[4];
+        
+        
+        // Calculate smooth rotation changes
+        smoothPitchChange = Mathf.MoveTowards(smoothPitchChange, pitchChange, 2f * Time.fixedDeltaTime);
+        smoothYawChange = Mathf.MoveTowards(smoothYawChange, yawChange, 2f * Time.fixedDeltaTime);
+        float pitch = rotationVector.x + smoothPitchChange * Time.fixedDeltaTime * pitchSpeed;
+
+        if (pitch > 180f) pitch -= 360f;
+        pitch = Mathf.Clamp(pitch, -MaxPitchAngle, MaxPitchAngle);
+
+        float yaw = rotationVector.y + smoothYawChange * Time.fixedDeltaTime * yawSpeed;
+        
+        // Apply the new rotation
+        transform.rotation = Quaternion.Euler(pitch, yaw, 0f);
+    }
+    
+    /// <summary>
+    /// Collect vector observation from the environment
+    /// </summary>
+    /// <param name="sensor">The vector sensor</param>
+    public override void CollectObservations(VectorSensor sensor)
+    {
+
+        if (nearestFlower == null)
+        {
+            sensor.AddObservation(new float[10]);
+            return;
+        }
+        //Observe the agent's local rotation (4 observations)
+        sensor.AddObservation(transform.localRotation.normalized);
+        
+        // Get a vector from the beak tip to the nearest flower (3 observations)
+        Vector3 toFlower = nearestFlower.FlowerCenterPosition - beakTip.position;
+        sensor.AddObservation(toFlower.normalized);
+
+        sensor.AddObservation(Vector3.Dot(toFlower.normalized, -nearestFlower.FlowerUpVector.normalized));
+        
+        // Observe a dot product that indicates whether the beak is pointing toward the flower
+        sensor.AddObservation(Vector3.Dot(beakTip.forward.normalized, -nearestFlower.FlowerUpVector.normalized));
+        
+        //Observe the relative distance from the beak tip to the flower
+        sensor.AddObservation(toFlower.magnitude / FlowerArea.AreaDiameter);
+    }
+
+    /// <summary>
+    /// When behavior Type is set to "Heyristic Only" on the agent's Behavior Parameters, <br />
+    /// this function will be called. Its return values will be fed into
+    /// <see cref="OnActionReceived"/> Instead of using the neural network
+    /// </summary>
+    /// <param name="actionsOut">And output action array</param>
+    public override void Heuristic(float[] actionsOut)
+    {
+        Vector3 forward = Vector3.zero;
+        Vector3 left = Vector3.zero;
+        Vector3 up = Vector3.zero;
+        float pitch = 0f;
+        float yaw = 0f;
+
+
+        if (Input.GetKey((KeyCode.W))) forward = transform.forward;
+        else if (Input.GetKey((KeyCode.S))) forward = -transform.forward;
+        
+        if (Input.GetKey((KeyCode.A))) left = -transform.right;
+        else if (Input.GetKey((KeyCode.D))) left = transform.right;
+        
+        if (Input.GetKey((KeyCode.E))) up = transform.up;
+        else if (Input.GetKey((KeyCode.C))) up = -transform.up;
+
+        if (Input.GetKey((KeyCode.UpArrow))) pitch = 1f;
+        else if (Input.GetKey((KeyCode.DownArrow))) pitch = -1f;
+        
+        if (Input.GetKey((KeyCode.LeftArrow))) yaw = -1f;
+        else if (Input.GetKey((KeyCode.RightArrow))) yaw = 1f;
+
+        Vector3 combined = (forward + left + up).normalized;
+
+        actionsOut[0] = combined.x;
+        actionsOut[1] = combined.y;
+        actionsOut[2] = combined.z;
+        actionsOut[3] = pitch;
+        actionsOut[4] = yaw;
+    }
+    
+
 
     private void MoveToSafeRandomPosition(bool inFrontOfFlower)
     {
@@ -131,5 +242,33 @@ public class HummingbirdAgent : Agent
 
         transform.position = potentialPosition;
         transform.rotation = potentialRotation;
+    }
+    
+    /// <summary>
+    /// Update the nearest flower to the agent
+    /// </summary>
+    private void UpdateNearestFlower()
+    {
+        foreach (Flower flower in flowerArea.Flowers)
+        {
+            if (nearestFlower == null && flower.HasNector)
+            {
+                // No current nearest flower and this flower has nectar, so set to this flower
+                nearestFlower = flower;
+            }
+            
+            else if (flower.HasNector)
+            {
+                // Calculate distance to this flower and distance to the current nearest flower
+                float distanceToFlower = Vector3.Distance(flower.transform.position, beakTip.position);
+                float distanceToCurrentNearestFlower =
+                    Vector3.Distance(nearestFlower.transform.position, beakTip.position);
+
+                if (!nearestFlower.HasNector || distanceToFlower < distanceToCurrentNearestFlower)
+                {
+                    nearestFlower = flower;
+                }
+            }
+        }
     }
 }
