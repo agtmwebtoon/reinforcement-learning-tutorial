@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Mathematics;
@@ -197,7 +198,20 @@ public class HummingbirdAgent : Agent
         actionsOut[3] = pitch;
         actionsOut[4] = yaw;
     }
+
+    public void FreezeAgent()
+    {
+        Debug.Assert(trainingMode == false, "Freeze/unfreeze not supported in training");
+        frozen = true;
+        rigidbody.Sleep();
+    }
     
+    public void UnfreezeAgent()
+    {
+        Debug.Assert(trainingMode == false, "Freeze/unfreeze not supported in training");
+        frozen = false;
+        rigidbody.WakeUp();
+    }
 
 
     private void MoveToSafeRandomPosition(bool inFrontOfFlower)
@@ -270,5 +284,72 @@ public class HummingbirdAgent : Agent
                 }
             }
         }
+    }
+    
+    /// <summary>
+    /// Called when agent's collider enters a trigger collider
+    /// </summary>
+    /// <param name="other">The trigger collider</param>
+    private void OnTriggerEnter(Collider other)
+    {
+        TriggerEnterOrStay(other);
+    }
+    
+    /// <summary>
+    /// Called when agent's collider enters a trigger collider
+    /// </summary>
+    /// <param name="other">The trigger collider</param>
+    private void OnTriggerStay(Collider other)
+    {
+        TriggerEnterOrStay(other);
+    }
+    
+    private void TriggerEnterOrStay(Collider collider)
+    {
+        if (collider.CompareTag("nectar"))
+        {
+            Vector3 closestPointToBeakTip = collider.ClosestPoint(beakTip.position);
+
+            if (Vector3.Distance(beakTip.position, closestPointToBeakTip) < BeakTipRadius)
+            {
+                Flower flower = flowerArea.GetFlowerFromNectar(collider);
+
+                float nectarReceived = flower.Feed(.01f);
+                NectarObtained += nectarReceived;
+
+                if (trainingMode)
+                {
+                    float bonus = .02f * Mathf.Clamp01(Vector3.Dot(transform.forward.normalized,
+                        -nearestFlower.FlowerUpVector.normalized));
+                    AddReward(.01f + bonus);
+                }
+
+                if (!flower.HasNector)
+                {
+                    UpdateNearestFlower();
+                }
+            }
+        }
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (trainingMode && collision.collider.CompareTag("boundary"))
+        {
+            AddReward(-.5f);
+        }
+    }
+
+    private void Update()
+    {
+        // Draw a line from the beak tip to the nearest flower
+        if (nearestFlower != null)
+            Debug.DrawLine(beakTip.position, nearestFlower.FlowerCenterPosition, Color.green);
+    }
+
+    private void FixedUpdate()
+    {
+        if (nearestFlower != null && !nearestFlower.HasNector)
+            UpdateNearestFlower();
     }
 }
